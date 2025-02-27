@@ -1,5 +1,6 @@
 #include <VBCoreG4_arduino_system.h>
 #include <Servo.h>
+#include <NewPing.h>
 
 Servo servo_1;
 Servo servo_2;
@@ -17,9 +18,15 @@ Servo servo_6;
 #define servo_5_pin PC3 
 #define servo_6_pin PC2 
 
+
+uint8_t data[4] = {1, 0, 0, 0};
+unsigned long t;
+
 FDCAN_HandleTypeDef*  hfdcan1; 
 CanFD* canfd;
 FDCAN_TxHeaderTypeDef TxHeader;
+
+NewPing sonar(trig, echo, 255);
 
 void setup() {
   Serial.begin(115200);
@@ -51,14 +58,6 @@ void setup() {
   TxHeader.DataLength = FDCAN_DLC_BYTES_4;
   TxHeader.IdType = FDCAN_EXTENDED_ID;
 
-  /*init timer*/
-  HardwareTimer *timer = new HardwareTimer(TIM3);
-  timer->pause(); 
-  timer->setOverflow(1, HERTZ_FORMAT);  
-  timer->attachInterrupt(send_can); 
-  timer->refresh();
-  timer->resume();
-
 }
 
 uint8_t servo_n[4] = {0,0,0,0}; //changing
@@ -81,18 +80,7 @@ void loop() {
   else if (flags[3]){servo_6.writeMicroseconds(right);}
   else {servo_6.writeMicroseconds(stop);}
   get_can();
-  delay(100);
-}
-
-
-void send_can(){
-  int data_1 = getDist();
-  if (data_1<=255 && data_1>=0){
-    uint8_t data[1] = {data_1};
-    if (HAL_FDCAN_GetTxFifoFreeLevel(hfdcan1) != 0){
-      if (HAL_FDCAN_AddMessageToTxFifoQ(hfdcan1, &TxHeader, data) != HAL_OK){ Error_Handler(); } 
-    }
-  }
+  delay(20);
 }
 
 
@@ -103,23 +91,31 @@ void get_can(){
     if (HAL_FDCAN_GetRxMessage(hfdcan1, FDCAN_RX_FIFO0, &Header, RxData) != HAL_OK){ Error_Handler(); }  
     else {
       uint8_t ident = Header.Identifier;
-      if (ident == 0x01 || ident==0x02 || ident==0x03 || ident==0x04){
+      if (ident == 0x52 || ident==0x68 || ident==0x60 || ident==0x20 || 0x42){
         switch(ident){
-          case 0x01:
+          case 0x52:
             servo_n[0]=RxData[0];
             break;
-          case 0x02:
+          case 0x68:
             servo_n[1]=RxData[0];
             break;
-          case 0x03:
+          case 0x60:
             servo_n[2]=RxData[0];
             break;
-          case 0x04:
+          case 0x20:
             servo_n[3]=RxData[0];
             break;
+          case 0x42:
+            data[0] = sonar.ping_cm();
+            if (data[0]==0){
+              data[0]=50;
+            }
+            delay(50);
+            send_can();
+            break;
         }
-      } else if (ident==0x05 || ident==0x06){
-        if (ident==0x05){
+      } else if (ident==0x63 || ident==0x34){
+        if (ident==0x63){
           if (RxData[0]==1){
             flags[0]=true;
           } else if (RxData[0]==2){
@@ -143,12 +139,8 @@ void get_can(){
   }
 }
 
-
-int getDist() {
-  digitalWrite(trig, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(echo, LOW);
-
-  uint32_t sii = pulseIn(echo, HIGH);
-  return round(sii / 58.2);
+void send_can(){
+  if (HAL_FDCAN_GetTxFifoFreeLevel(hfdcan1) != 0){
+    if (HAL_FDCAN_AddMessageToTxFifoQ(hfdcan1, &TxHeader, data) != HAL_OK){Error_Handler();}
+  }
 }
